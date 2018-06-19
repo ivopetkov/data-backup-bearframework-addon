@@ -20,15 +20,21 @@ class DataBackup
     /**
      * 
      * @param string $backupFileName
+     * @param array $options Available options: dataRepository
      * @return array Returns a list of backed up keys
      * @throws \Exception
      */
-    public function backupAll(string $backupFileName): array
+    public function backupAll(string $backupFileName, $options = []): array
     {
         $app = App::get();
 
+        $dataRepository = isset($options['dataRepository']) ? $options['dataRepository'] : $app->data;
+        if (!($dataRepository instanceof \BearFramework\App\DataRepository)) {
+            throw new \Exception('Invalid data repository!');
+        }
+
         $dateStarted = new \DateTime();
-        $list = $app->data->getList()
+        $list = $dataRepository->getList()
                 ->filterBy('key', '.', 'notStartWith') // skip .temp, .recyclebin, etc.
                 ->sliceProperties(['key']);
         if (is_file($backupFileName)) {
@@ -39,11 +45,11 @@ class DataBackup
             $keysInArchive = [];
             $metadataInArchive = [];
             foreach ($list as $item) {
-                $item = $app->data->get($item->key);
+                $item = $dataRepository->get($item->key);
                 if ($item !== null) {
                     $keysInArchive[] = $item->key;
                     $metadata = [];
-                    if ($app->data->isPublic($item->key)) {
+                    if ($dataRepository->isPublic($item->key)) {
                         $metadata['public'] = '1';
                     }
                     $itemMetadata = $item->metadata->toArray();
@@ -62,7 +68,8 @@ class DataBackup
             $zip->addFromString('about', json_encode([
                 'version' => '1',
                 'dateStarted' => $dateStarted->format('c'),
-                'dateCompleted' => $dateCompleted->format('c')
+                'dateCompleted' => $dateCompleted->format('c'),
+                'valuesCount' => sizeof($keysInArchive)
             ]));
 
             $zip->close();
@@ -90,6 +97,86 @@ class DataBackup
             }
         } else {
             throw new \Exception('Cannot open zip file for writing (' . $backupFileName . ')');
+        }
+    }
+
+    /**
+     * 
+     * @param string $backupFileName
+     * @param array $options Available options: dataRepository
+     * @throws \Exception
+     */
+    public function restoreBackup(string $backupFileName, $options = [])
+    {
+        $app = App::get();
+
+        $dataRepository = isset($options['dataRepository']) ? $options['dataRepository'] : $app->data;
+        if (!($dataRepository instanceof \BearFramework\App\DataRepository)) {
+            throw new \Exception('Invalid data repository!');
+        }
+
+        if (!is_file($backupFileName)) {
+            throw new \Exception('Backup file not found (' . $backupFileName . ')');
+        }
+
+        $zip = new \ZipArchive();
+        if ($zip->open($backupFileName) === true) {
+            $about = $zip->getFromName('about');
+            if ($about === false) {
+                throw new \Exception('Invalid backup file (' . $backupFileName . ')! The about file is missing!');
+            }
+            $about = json_decode($about, true);
+            if (!is_array($about) || !isset($about['valuesCount'])) {
+                throw new \Exception('Invalid backup file (' . $backupFileName . ')! The about file is not valid!');
+            }
+            $valuesCount = (int) $about['valuesCount'];
+            $keysInArchive = [];
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $filename = $zip->getNameIndex($i);
+                if (strpos($filename, 'values/') === 0) {
+                    $keysInArchive[] = substr($filename, 7);
+                }
+            }
+            if (sizeof($keysInArchive) !== $valuesCount) {
+                throw new \Exception('Invalid backup file (' . $backupFileName . ')! The values files count is not valid!');
+            }
+            $tempPrefix = '.temp/data-backup-restore-' . md5(uniqid()) . '/';
+            $tempKeys = [];
+            $cleanUpTempItems = function() use ($dataRepository, $tempPrefix, &$tempKeys) {
+                foreach ($tempKeys as $tempKey) {
+                    $dataRepository->delete($tempPrefix . $tempKey);
+                }
+            };
+            foreach ($keysInArchive as $keyInArchive) {
+                $content = $zip->getFromName('values/' . $keyInArchive);
+                if ($content === false) {
+                    $cleanUpTempItems();
+                    throw new \Exception('Invalid backup file (' . $backupFileName . ')! The value for ' . $keyInArchive . ' is not valid!');
+                }
+                $metadata = $zip->getFromName('metadata/' . $keyInArchive);
+                $metadata = $metadata === false ? [] : json_decode($metadata, true);
+                $dataItem = $dataRepository->make($tempPrefix . $keyInArchive, $content);
+                $makePublic = false;
+                if (is_array($metadata)) {
+                    if (isset($metadata['metadata'])) {
+                        foreach ($metadata['metadata'] as $metadataKey => $metadataValue) {
+                            $dataItem->metadata[$metadataKey] = $metadataValue;
+                        }
+                    }
+                    $makePublic = isset($metadata['public']);
+                }
+                $dataRepository->set($dataItem);
+                if ($makePublic) {
+                    $dataRepository->makePublic($tempPrefix . $keyInArchive);
+                }
+                $tempKeys[] = $keyInArchive;
+            }
+            foreach ($tempKeys as $tempKey) {
+                $dataRepository->rename($tempPrefix . $tempKey, $tempKey);
+            }
+            $zip->close();
+        } else {
+            throw new \Exception('Cannot open backup file (' . $backupFileName . ') as zip archive!');
         }
     }
 
