@@ -33,6 +33,8 @@ class DataBackup
             throw new \Exception('Invalid data repository!');
         }
 
+        $startMemoryUsage = memory_get_usage();
+
         $dateStarted = new \DateTime();
         $list = $dataRepository->getList()
                 ->filterBy('key', '.', 'notStartWith') // skip .temp, .recyclebin, etc.
@@ -40,63 +42,98 @@ class DataBackup
         if (is_file($backupFileName)) {
             throw new \Exception('The backup file ' . $backupFileName . ' already exists!');
         }
-        $zip = new \ZipArchive();
-        if ($zip->open($backupFileName, \ZipArchive::CREATE) === true) {
-            $keysInArchive = [];
-            $metadataInArchive = [];
-            foreach ($list as $item) {
-                $item = $dataRepository->get($item->key);
-                if ($item !== null) {
-                    $keysInArchive[] = $item->key;
-                    $metadata = [];
-                    if ($dataRepository->isPublic($item->key)) {
-                        $metadata['public'] = '1';
-                    }
-                    $itemMetadata = $item->metadata->toArray();
-                    if (!empty($itemMetadata)) {
-                        $metadata['metadata'] = $itemMetadata;
-                    }
-                    $zip->addFromString('values/' . $item->key, $item->value);
-                    if (!empty($metadata)) {
-                        $zip->addFromString('metadata/' . $item->key, json_encode($metadata));
-                        $metadataInArchive[] = $item->key;
-                    }
+
+        $getConfigMemoryLimit = function(): int {
+            $limit = trim(ini_get('memory_limit'));
+            $letter = strtolower(substr($limit, -1));
+            $number = substr($limit, 0, -1);
+            if ($letter === 'g') {
+                return (int) $number * 1024 * 1024 * 1024;
+            } elseif ($letter === 'm') {
+                return (int) $number * 1024 * 1024;
+            } elseif ($letter === 'k') {
+                return (int) $number * 1024;
+            }
+            return (int) $limit;
+        };
+
+        $memoryLimit = isset($options['memoryLimit']) ? (int) $options['memoryLimit'] : ($getConfigMemoryLimit() - $startMemoryUsage) / 2;
+
+        $zip = null;
+        $openZip = function() use (&$zip, $backupFileName) {
+            if ($zip === null) {
+                $zip = new \ZipArchive();
+                if (!$zip->open($backupFileName, \ZipArchive::CREATE)) {
+                    throw new \Exception('Cannot open zip filee for writing (' . $backupFileName . ')!');
                 }
             }
-
-            $dateCompleted = new \DateTime();
-            $zip->addFromString('about', json_encode([
-                'version' => '1',
-                'dateStarted' => $dateStarted->format('c'),
-                'dateCompleted' => $dateCompleted->format('c'),
-                'valuesCount' => sizeof($keysInArchive)
-            ]));
-
-            $zip->close();
-
-            $zip = new \ZipArchive();
-            if ($zip->open($backupFileName) === true) {
-                $status = $zip->getStatusString();
-                if ($status !== 'No error') {
-                    throw new \Exception('Archive status: ' . $status);
-                }
-                foreach ($keysInArchive as $key) {
-                    if ($zip->locateName('values/' . $key) === false) {
-                        throw new \Exception('Cannot find values/' . $key . ' in the archive!');
-                    }
-                }
-                foreach ($metadataInArchive as $key) {
-                    if ($zip->locateName('metadata/' . $key) === false) {
-                        throw new \Exception('Cannot find metadata/' . $key . ' in the archive!');
-                    }
-                }
+        };
+        $closeZip = function() use (&$zip) {
+            if ($zip !== null) {
                 $zip->close();
-                return $keysInArchive;
-            } else {
-                throw new \Exception('Cannot open zip file for validation (' . $backupFileName . ')');
+                $zip = null;
             }
+        };
+
+        $keysInArchive = [];
+        $metadataInArchive = [];
+        foreach ($list as $item) {
+            $item = $dataRepository->get($item->key);
+            if ($item !== null) {
+                $keysInArchive[] = $item->key;
+                $metadata = [];
+                if ($dataRepository->isPublic($item->key)) {
+                    $metadata['public'] = '1';
+                }
+                $itemMetadata = $item->metadata->toArray();
+                if (!empty($itemMetadata)) {
+                    $metadata['metadata'] = $itemMetadata;
+                }
+                $openZip();
+                $zip->addFromString('values/' . $item->key, $item->value);
+                if (!empty($metadata)) {
+                    $zip->addFromString('metadata/' . $item->key, json_encode($metadata));
+                    $metadataInArchive[] = $item->key;
+                }
+                if (memory_get_usage() - $startMemoryUsage > $memoryLimit) {
+                    $closeZip();
+                }
+                unset($metadata);
+            }
+            unset($item);
+        }
+
+        $openZip();
+        $dateCompleted = new \DateTime();
+        $zip->addFromString('about', json_encode([
+            'version' => '1',
+            'dateStarted' => $dateStarted->format('c'),
+            'dateCompleted' => $dateCompleted->format('c'),
+            'valuesCount' => sizeof($keysInArchive)
+        ]));
+        $closeZip();
+
+        $zip = new \ZipArchive();
+        if ($zip->open($backupFileName)) {
+            $status = $zip->getStatusString();
+            if ($status !== 'No error') {
+                throw new \Exception('Archive status: ' . $status);
+            }
+            foreach ($keysInArchive as $key) {
+                if ($zip->locateName('values/' . $key) === false) {
+                    throw new \Exception('Cannot find values/' . $key . ' in the archive!');
+                }
+            }
+            foreach ($metadataInArchive as $key) {
+                if ($zip->locateName('metadata/' . $key) === false) {
+                    throw new \Exception('Cannot find metadata/' . $key . ' in the archive!');
+                }
+            }
+            $zip->close();
+            unset($zip);
+            return $keysInArchive;
         } else {
-            throw new \Exception('Cannot open zip file for writing (' . $backupFileName . ')');
+            throw new \Exception('Cannot open zip file for validation (' . $backupFileName . ')');
         }
     }
 
@@ -120,7 +157,7 @@ class DataBackup
         }
 
         $zip = new \ZipArchive();
-        if ($zip->open($backupFileName) === true) {
+        if ($zip->open($backupFileName)) {
             $about = $zip->getFromName('about');
             if ($about === false) {
                 throw new \Exception('Invalid backup file (' . $backupFileName . ')! The about file is missing!');
