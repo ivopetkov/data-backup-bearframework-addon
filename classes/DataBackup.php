@@ -42,6 +42,17 @@ class DataBackup
         if (is_file($backupFileName)) {
             throw new \Exception('The backup file ' . $backupFileName . ' already exists!');
         }
+        $tempBackupFileName = null;
+        for ($i = 0; $i < 100; $i++) {
+            $_tempBackupFileName = $backupFileName . '.' . md5(uniqid()) . '.tmp';
+            if (!is_file($_tempBackupFileName)) {
+                $tempBackupFileName = $_tempBackupFileName;
+                break;
+            }
+        }
+        if ($tempBackupFileName === null) {
+            throw new \Exception('Cannot find available temp file name!');
+        }
 
         $getConfigMemoryLimit = function(): int {
             $limit = trim(ini_get('memory_limit'));
@@ -60,11 +71,11 @@ class DataBackup
         $memoryLimit = isset($options['memoryLimit']) ? (int) $options['memoryLimit'] : ($getConfigMemoryLimit() - $startMemoryUsage) / 2;
 
         $zip = null;
-        $openZip = function() use (&$zip, $backupFileName) {
+        $openZip = function() use (&$zip, $tempBackupFileName) {
             if ($zip === null) {
                 $zip = new \ZipArchive();
-                if (!$zip->open($backupFileName, \ZipArchive::CREATE)) {
-                    throw new \Exception('Cannot open zip filee for writing (' . $backupFileName . ')!');
+                if (!$zip->open($tempBackupFileName, \ZipArchive::CREATE)) {
+                    throw new \Exception('Cannot open zip filee for writing (' . $tempBackupFileName . ')!');
                 }
             }
         };
@@ -114,7 +125,7 @@ class DataBackup
         $closeZip();
 
         $zip = new \ZipArchive();
-        if ($zip->open($backupFileName)) {
+        if ($zip->open($tempBackupFileName)) {
             $status = $zip->getStatusString();
             if ($status !== 'No error') {
                 throw new \Exception('Archive status: ' . $status);
@@ -131,9 +142,10 @@ class DataBackup
             }
             $zip->close();
             unset($zip);
+            rename($tempBackupFileName, $backupFileName);
             return $keysInArchive;
         } else {
-            throw new \Exception('Cannot open zip file for validation (' . $backupFileName . ')');
+            throw new \Exception('Cannot open zip file for validation (' . $tempBackupFileName . ')');
         }
     }
 
