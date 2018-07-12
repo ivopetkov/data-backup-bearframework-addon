@@ -10,7 +10,7 @@
 /**
  * @runTestsInSeparateProcesses
  */
-class DataTest extends BearFrameworkAddonTestCase
+class DataTest extends BearFramework\AddonTests\PHPUnitTestCase
 {
 
     /**
@@ -80,7 +80,7 @@ class DataTest extends BearFrameworkAddonTestCase
         $backupFileName = sys_get_temp_dir() . '/data-backup-test-' . uniqid() . '.zip';
         $keys = $app->dataBackup->backupAll($backupFileName);
         $this->assertTrue($keys === []);
-        $this->setExpectedException('Exception'); // Backup file exists
+        $this->expectException('Exception'); // Backup file exists
         $keys = $app->dataBackup->backupAll($backupFileName);
     }
 
