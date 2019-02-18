@@ -26,8 +26,7 @@ class DataTest extends BearFramework\AddonTests\PHPUnitTestCase
             foreach ($list as $item) {
                 $array[$item->key] = [
                     'value' => $item->value,
-                    'metadata' => $item->metadata->toArray(),
-                    'public' => (int) $app->data->isPublic($item->key)
+                    'metadata' => $item->metadata
                 ];
             }
             return $array;
@@ -41,7 +40,6 @@ class DataTest extends BearFramework\AddonTests\PHPUnitTestCase
 
         $item = $app->data->make('test/test2', '2');
         $app->data->set($item);
-        $app->data->makePublic('test/test2');
 
         $item = $app->data->make('test/test3', '3');
         $app->data->set($item);

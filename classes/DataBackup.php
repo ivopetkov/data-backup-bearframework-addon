@@ -89,14 +89,11 @@ class DataBackup
         $keysInArchive = [];
         $metadataInArchive = [];
         foreach ($list as $item) {
-            $item = $dataRepository->get($item->key);
+            $item = $dataRepository->get($item['key']);
             if ($item !== null) {
                 $keysInArchive[] = $item->key;
                 $metadata = [];
-                if ($dataRepository->isPublic($item->key)) {
-                    $metadata['public'] = '1';
-                }
-                $itemMetadata = $item->metadata->toArray();
+                $itemMetadata = $item->metadata;
                 if (!empty($itemMetadata)) {
                     $metadata['metadata'] = $itemMetadata;
                 }
