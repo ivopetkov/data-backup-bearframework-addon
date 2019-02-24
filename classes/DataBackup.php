@@ -202,19 +202,14 @@ class DataBackup
                 $metadata = $zip->getFromName('metadata/' . $keyInArchive);
                 $metadata = $metadata === false ? [] : json_decode($metadata, true);
                 $dataItem = $dataRepository->make($tempPrefix . $keyInArchive, $content);
-                $makePublic = false;
                 if (is_array($metadata)) {
                     if (isset($metadata['metadata'])) {
                         foreach ($metadata['metadata'] as $metadataKey => $metadataValue) {
                             $dataItem->metadata[$metadataKey] = $metadataValue;
                         }
                     }
-                    $makePublic = isset($metadata['public']);
                 }
                 $dataRepository->set($dataItem);
-                if ($makePublic) {
-                    $dataRepository->makePublic($tempPrefix . $keyInArchive);
-                }
                 $tempKeys[] = $keyInArchive;
             }
             foreach ($tempKeys as $tempKey) {
