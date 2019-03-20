@@ -26,7 +26,7 @@ class DataTest extends BearFramework\AddonTests\PHPUnitTestCase
             foreach ($list as $item) {
                 $array[$item->key] = [
                     'value' => $item->value,
-                    'metadata' => $item->metadata
+                    'metadata' => $item->metadata->toArray()
                 ];
             }
             return $array;

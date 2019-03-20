@@ -93,7 +93,7 @@ class DataBackup
             if ($item !== null) {
                 $keysInArchive[] = $item->key;
                 $metadata = [];
-                $itemMetadata = $item->metadata;
+                $itemMetadata = $item->metadata->toArray();
                 if (!empty($itemMetadata)) {
                     $metadata['metadata'] = $itemMetadata;
                 }
